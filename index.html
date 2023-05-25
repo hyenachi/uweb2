@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Export to Three.js(3.0)</title>
+    <script type="text/javascript" src="./three/plugins/gzip/pako.js"></script>
+    <style>
+        body {
+            margin: 0px;
+            overflow: hidden;
+        }
+    </style>
+</head>
+
+<body>
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "./three/build/three.module.js",
+            "three/addons/": "./three/jsm/"
+        }
+    }
+</script>
+    <div id="WebGL_Output"></div>
+    <script type="module">
+        import * as THREE from './three/build/three.module.js';
+        import { OrbitControls } from './three/jsm/controls/OrbitControls.js';
+
+        var sceneName = "{FROM}/6_ArcPulseCore{END}";
+        sceneName = sceneName.replace("{FROM}", "").replace("{END}", "");
+        var rootPath = "Scenes/" + sceneName;
+
+        var scene = new THREE.Scene();
+        var loader = new THREE.ObjectLoader();
+        var renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setPixelRatio(window.devicePixelRatio);
+
+        var camera, controls;
+
+        var loadComplete = false;
+
+        function start() {
+            var num = 0;
+            var fileLoader = new THREE.FileLoader();
+            fileLoader.load(rootPath + "/ExportPackageInfo.json", function (text) {
+                const sceneConfig = JSON.parse(text)
+                for (var i = 0; i < sceneConfig.length; i++) {
+                    var compressionType = sceneConfig[i].compressionType;
+                    var url = rootPath + "/Models/" + sceneConfig[i].name;
+                    switch (compressionType) {
+                        case "none":
+                            loader.load(url, function (obj) {
+                                objLoad(obj);
+                            });
+                            break;
+                        case "gzipCompression":
+                            var fileLoader2 = new THREE.FileLoader();
+                            fileLoader2.setResponseType('arraybuffer');
+                            fileLoader2.load(url, function (text) {
+                                var binData = new Uint8Array(text);
+                                var data = pako.inflate(binData, { to: 'string' });
+                                loader.setResourcePath(rootPath + "/Textures/");
+                                loader.parse(JSON.parse(data), function (obj) {
+                                    objLoad(obj);
+                                });
+                            })
+                            break;
+                    }
+                }
+
+                function objLoad(obj) {
+                    if (sceneConfig[0].sRGBEncoding) {
+                        if (sceneConfig[0].sRGBEncoding != 3001) {
+                            renderer.outputEncoding = THREE.sRGBEncoding;
+                        }
+                    } else {
+                        renderer.outputEncoding = THREE.sRGBEncoding;
+                    }
+                    scene.add(obj);
+                    if (obj.isScene) {
+                        if (obj.background)
+                            scene.background = obj.background
+                        if (obj.environment)
+                            scene.environment = obj.environment
+                        if (obj.backgroundBlurriness) {
+                            scene.backgroundBlurriness = obj.backgroundBlurriness
+                        }
+                        if (obj.backgroundIntensity) {
+                            scene.backgroundIntensity = obj.backgroundIntensity
+                        }
+                        if (obj.fog)
+                            scene.fog = obj.fog
+                    }
+
+                    initInfo(obj);
+                    update();
+                    num++;
+                    if (num == sceneConfig.length) {
+                        //所有资料加载完毕，执行回调函数
+                        //加载完成后强行渲染一次
+                        renderer.render(scene, camera);
+                        loadComplete = true;
+                        // console.log(scene.getObjectByName("Corset").material)
+                    }
+                }
+            });
+        }
+
+        var fps = 30;
+        var now;
+        var then = Date.now();
+        var interval = 1000 / fps;
+        var delta;
+
+        //用于记录上帧和当前帧相机的位置
+        var cameraThenPos = new THREE.Vector3(), cameraNowPos = new THREE.Vector3();
+
+        function update() {
+            requestAnimationFrame(update);
+            //渲染优化,1.间隔渲染; 2.判断相机有无运动,无运动则停止渲染
+            now = Date.now();
+            delta = now - then;
+            if (delta > interval) {
+                then = now - (delta % interval);
+
+                if (camera != null)
+                    cameraThenPos = camera.position.clone();
+
+                if (camera != null) {
+                    if (cameraNowPos != null || cameraThenPos != null) {
+                        if (cameraNowPos.x != cameraThenPos.x || cameraNowPos.y != cameraThenPos.y || cameraNowPos.z != cameraThenPos.z || !loadComplete) {
+                            if (renderer != null) {
+                                renderer.render(scene, camera);
+                                cameraNowPos = camera.position.clone();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        function onResize() {
+            if (camera != null) {
+                camera.aspect = window.innerWidth / window.innerHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize(window.innerWidth, window.innerHeight);
+                renderer.render(scene, camera);
+            }
+        }
+
+        function initInfo(node) {
+            ///相机初始化设置
+            if (node instanceof THREE.PerspectiveCamera) {
+                camera = node;
+                scene.updateMatrixWorld(true);
+                controls = new OrbitControls(camera, renderer.domElement);
+                //判断相机下是否有CameraTarget子物体,CameraTarget用于设置相机初始化聚焦点
+                var cameraTarget = camera.getObjectByName("CameraTarget");
+                if (cameraTarget != null) {
+                    var cameraTargetPosition = new THREE.Vector3();
+                    cameraTargetPosition.setFromMatrixPosition(cameraTarget.matrixWorld);
+                    camera.lookAt(cameraTargetPosition);
+                    controls.target = cameraTargetPosition;
+                }
+                //相机加载完成后刷新
+                onResize();
+                document.getElementById("WebGL_Output").appendChild(renderer.domElement);
+            }
+
+            for (var i = 0; i < node.children.length; i++) {
+                initInfo(node.children[i]);
+            }
+        }
+
+        window.onload = start;
+        window.addEventListener("resize", onResize, false);
+    </script>
+</body>
+
+</html>
